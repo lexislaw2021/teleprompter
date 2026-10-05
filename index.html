@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>口播跟读提词器</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --fg:#e8eaf0; --dim:#9aa3b2; --accent:#4f8cff; --ok:#3ecf8e; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; height:100%; }
+  body { display:flex; flex-direction:column; height:100dvh; overflow:hidden; }
+
+  #setup { padding:16px; display:flex; flex-direction:column; gap:13px; height:100%; }
+  h1 { font-size:18px; margin:0; font-weight:600; }
+  .hint { font-size:12px; color:var(--dim); line-height:1.6; }
+  textarea { width:100%; flex:1; min-height:200px; background:var(--panel); border:1px solid #2a2f3a; border-radius:10px; color:var(--fg); padding:12px; font-size:15px; line-height:1.7; resize:none; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .row label { font-size:14px; white-space:nowrap; }
+  select { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:8px; font-size:14px; max-width:62%; }
+  input[type=range] { flex:1; accent-color:var(--accent); }
+  .val { font-size:13px; color:var(--accent); min-width:44px; text-align:right; }
+  .bigbtn { width:100%; padding:16px; background:var(--accent); color:#fff; border:none; border-radius:12px; font-size:17px; font-weight:600; }
+
+  #player { padding:16px; display:none; flex-direction:column; gap:14px; height:100%; }
+  #statusbar { font-size:13px; color:var(--dim); text-align:center; }
+  #current { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; font-size:30px; line-height:1.6; font-weight:500; padding:10px; word-break:break-word; }
+  #progress { text-align:center; font-size:14px; color:var(--dim); }
+  #ctl { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  #ctl button { padding:14px; border-radius:12px; border:none; font-size:16px; font-weight:600; }
+  #btnPause { grid-column:1 / -1; background:var(--accent); color:#fff; }
+  #btnReplay, #btnSkip { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a !important; }
+  #btnExit { grid-column:1 / -1; background:transparent; color:var(--dim); font-size:14px; }
+  #dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#666; margin-right:6px; vertical-align:middle; }
+  #dot.speaking { background:#f5b94f; }
+  #dot.listening { background:var(--accent); }
+  #dot.following { background:var(--ok); }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>口播跟读提词器</h1>
+  <div class="hint">粘贴文案，点「开始」。它一句句读给你听，等你用麦克风跟读，你念完停顿一下，自动接下一句——节奏完全跟着你走。念错或跟不上，点下方按钮或点屏幕中央翻句。</div>
+  <textarea id="text" placeholder="把口播文案粘贴到这里……"></textarea>
+  <div class="row"><label>朗读语音</label><select id="voiceSel"></select></div>
+  <div class="row"><label>语速</label><input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="0.9"><span class="val" id="rateVal">0.90x</span></div>
+  <div class="row"><label>念完停顿判定</label><input type="range" id="pause" min="0.8" max="3" step="0.1" value="1.5"><span class="val" id="pauseVal">1.5s</span></div>
+  <button class="bigbtn" id="btnStart">开始</button>
+</div>
+
+<div id="player">
+  <div id="statusbar"><span id="dot"></span><span id="statusText">准备中…</span></div>
+  <div id="current"></div>
+  <div id="progress"></div>
+  <div id="ctl">
+    <button id="btnPause">暂停</button>
+    <button id="btnReplay">重读本句</button>
+    <button id="btnSkip">跳过本句</button>
+    <button id="btnExit">退出</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const setup=$('setup'), player=$('player'), textEl=$('text'), voiceSel=$('voiceSel');
+  const rateEl=$('rate'), rateVal=$('rateVal'), pauseEl=$('pause'), pauseVal=$('pauseVal');
+  const curEl=$('current'), progEl=$('progress'), dotEl=$('dot'), statusText=$('statusText');
+  const btnStart=$('btnStart'), btnPause=$('btnPause'), btnReplay=$('btnReplay'), btnSkip=$('btnSkip'), btnExit=$('btnExit');
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  const synth = window.speechSynthesis;
+  let voice=null, rate=0.9, pauseSeconds=1.5, voiceThreshold=0.02;
+  let audioCtx=null, analyser=null, micStream=null, dataArray=null;
+  let sentences=[], idx=0, running=false, gen=0;
+
+  // ---------- 切句 ----------
+  function splitSentences(text){
+    const res=[]; let cur='';
+    for(const ch of text){
+      cur+=ch;
+      if('。！？；…\n'.includes(ch)){ const s=cur.trim(); if(s) res.push(s); cur=''; }
+    }
+    const tail=cur.trim(); if(tail) res.push(tail);
+    return res;
+  }
+
+  // ---------- 语音 ----------
+  function loadVoices(){
+    const vs = synth.getVoices().filter(v=>/zh|cmn|mandarin/i.test(v.lang+' '+v.name));
+    voiceSel.innerHTML='';
+    if(!vs.length){ const o=document.createElement('option'); o.textContent='默认中文语音'; o.value=''; voiceSel.appendChild(o); return; }
+    vs.forEach(v=>{ const o=document.createElement('option'); o.textContent=v.name+'（'+v.lang+'）'; o.value=v.name; voiceSel.appendChild(o); });
+    voice=vs[0]||null;
+  }
+  loadVoices();
+  if(typeof synth.onvoiceschanged!=='undefined') synth.onvoiceschanged=loadVoices;
+  function pickVoice(){
+    const name=voiceSel.value;
+    const all=synth.getVoices();
+    return all.find(v=>v.name===name) || all.find(v=>/zh|cmn/i.test(v.lang)) || null;
+  }
+
+  // ---------- 朗读一句 ----------
+  function speak(text){
+    return new Promise(resolve=>{
+      try{ synth.cancel(); }catch(e){}
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang='zh-CN'; u.rate=rate;
+      const v=pickVoice(); if(v) u.voice=v;
+      let done=false; const finish=()=>{ if(!done){ done=true; resolve(); } };
+      u.onend=finish; u.onerror=finish;
+      try{ if(synth.paused) synth.resume(); }catch(e){}
+      synth.speak(u);
+      const estMs = Math.max(2000, text.length*400/rate + 1500);
+      setTimeout(finish, estMs);  // 兜底：onend 异常时也不卡死
+    });
+  }
+
+  // ---------- 麦克风 ----------
+  async function startMic(){
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    await audioCtx.resume();
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=1024;
+    audioCtx.createMediaStreamSource(micStream).connect(analyser);
+    dataArray=new Uint8Array(analyser.fftSize);
+  }
+  function stopMic(){
+    if(micStream){ try{ micStream.getTracks().forEach(t=>t.stop()); }catch(e){} micStream=null; }
+    if(audioCtx){ try{ audioCtx.close(); }catch(e){} audioCtx=null; analyser=null; }
+  }
+  function getLevel(){
+    if(!analyser) return 0;
+    analyser.getByteTimeDomainData(dataArray);
+    let s=0; for(let i=0;i<dataArray.length;i++){ const v=(dataArray[i]-128)/128; s+=v*v; }
+    return Math.sqrt(s/dataArray.length);
+  }
+  async function calibrate(){
+    setStatus('校准环境音量，请保持安静…');
+    const samples=[]; const t0=performance.now();
+    while(performance.now()-t0<1500){ samples.push(getLevel()); await sleep(30); }
+    samples.sort((a,b)=>a-b);
+    const baseline=samples[Math.floor(samples.length*0.6)]||0.01;
+    voiceThreshold=Math.max(baseline*3.5, 0.015);
+  }
+
+  // ---------- UI ----------
+  function setStatus(t,s){ statusText.textContent=t; dotEl.className=''; if(s) dotEl.classList.add(s); }
+  function render(){ curEl.textContent=sentences[idx]||''; progEl.textContent='第 '+(idx+1)+' / '+sentences.length+' 句'; }
+
+  // ---------- 等待跟读 ----------
+  function waitForFollow(myGen){
+    return new Promise(resolve=>{
+      let started=false, lastVoice=0;
+      function tick(){
+        if(!running || gen!==myGen){ resolve(); return; }
+        const lvl=getLevel(); const now=performance.now();
+        if(!started){
+          if(lvl>voiceThreshold){ started=true; lastVoice=now; setStatus('正在听你跟读…','following'); }
+        } else {
+          if(lvl>voiceThreshold){ lastVoice=now; }
+          else if(now-lastVoice>pauseSeconds*1000){ resolve(); return; }
+        }
+        requestAnimationFrame(tick);
+      }
+      setStatus('请跟读这句','listening');
+      requestAnimationFrame(tick);
+    });
+  }
+
+  // ---------- 主循环 ----------
+  async function run(){
+    const myGen=++gen;
+    running=true; btnPause.textContent='暂停';
+    try{
+      while(running && myGen===gen && idx<sentences.length){
+        render();
+        setStatus('正在读…','speaking');
+        await speak(sentences[idx]);
+        if(!running || myGen!==gen) break;
+        await sleep(250);
+        if(!running || myGen!==gen) break;
+        await waitForFollow(myGen);
+        if(!running || myGen!==gen) break;
+        idx++;
+      }
+      if(running && myGen===gen && idx>=sentences.length){
+        setStatus('全部读完 ✓','following'); curEl.textContent='（完）';
+      }
+    }catch(e){ setStatus('出错了：'+e.message); console.error(e); }
+    finally{ if(myGen===gen){ running=false; } }
+  }
+
+  function cancelTTS(){ try{ synth.cancel(); }catch(e){} }
+  function replay(){ cancelTTS(); gen++; run(); }                       // 重读当前句
+  function skip(){ cancelTTS(); gen++; if(idx<sentences.length-1) idx++; run(); }  // 跳到下一句
+
+  // ---------- 事件 ----------
+  rateEl.addEventListener('input',()=>{ rate=parseFloat(rateEl.value); rateVal.textContent=rate.toFixed(2)+'x'; });
+  pauseEl.addEventListener('input',()=>{ pauseSeconds=parseFloat(pauseEl.value); pauseVal.textContent=pauseSeconds.toFixed(1)+'s'; });
+
+  btnStart.addEventListener('click', async ()=>{
+    const text=textEl.value.trim();
+    if(!text){ alert('请先粘贴文案'); return; }
+    try{ localStorage.setItem('teleprompter_text', textEl.value); }catch(e){}
+    sentences=splitSentences(text);
+    if(!sentences.length){ alert('文案切不出句子'); return; }
+    try{ await startMic(); await calibrate(); }
+    catch(e){ alert('麦克风无法使用：'+e.message+'\n\n请确认：\n1. 已授予麦克风权限\n2. 页面通过 https 打开（本地 file:// 打不开麦克风）'); return; }
+    player.style.display='flex'; setup.style.display='none';
+    idx=0; render(); run();
+  });
+
+  btnPause.addEventListener('click', ()=>{
+    if(running){ running=false; cancelTTS(); btnPause.textContent='继续'; setStatus('已暂停',''); }
+    else { run(); }
+  });
+  btnReplay.addEventListener('click', replay);
+  btnSkip.addEventListener('click', skip);
+  btnExit.addEventListener('click', ()=>{ running=false; gen++; cancelTTS(); stopMic(); btnPause.textContent='暂停'; player.style.display='none'; setup.style.display='flex'; });
+
+  // 点屏幕中央 = 手动翻句（兜底）
+  curEl.addEventListener('click', skip);
+
+  // 保持屏幕常亮
+  let wakeLock=null;
+  async function keepAwake(){ try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){} }
+  btnStart.addEventListener('click', keepAwake);
+
+  try{ const saved=localStorage.getItem('teleprompter_text'); if(saved) textEl.value=saved; }catch(e){}
+})();
+</script>
+</body>
+</html>
