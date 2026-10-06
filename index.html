@@ -10,22 +10,26 @@
   html,body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; height:100%; }
   body { display:flex; flex-direction:column; height:100dvh; overflow:hidden; }
 
-  #setup { padding:16px; display:flex; flex-direction:column; gap:12px; height:100%; }
+  #setup { padding:14px; display:flex; flex-direction:column; gap:10px; height:100%; }
   h1 { font-size:18px; margin:0; font-weight:600; }
+  #diag { font-size:12px; line-height:1.9; padding:10px; background:var(--panel); border:1px solid #2a2f3a; border-radius:10px; color:var(--dim); }
+  #diag b { color:var(--fg); }
+  #diag .ok { color:var(--ok); }
+  #diag .bad { color:var(--err); }
   .hint { font-size:12px; color:var(--dim); line-height:1.6; }
-  textarea { width:100%; flex:1; min-height:160px; background:var(--panel); border:1px solid #2a2f3a; border-radius:10px; color:var(--fg); padding:12px; font-size:15px; line-height:1.7; resize:none; }
+  textarea { width:100%; flex:1; min-height:120px; background:var(--panel); border:1px solid #2a2f3a; border-radius:10px; color:var(--fg); padding:12px; font-size:15px; line-height:1.7; resize:none; }
   .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .row label { font-size:14px; white-space:nowrap; }
-  select { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:8px; font-size:14px; max-width:62%; }
+  select { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:8px; font-size:14px; max-width:60%; }
   input[type=range] { flex:1; accent-color:var(--accent); }
   .val { font-size:13px; color:var(--accent); min-width:44px; text-align:right; }
   #msg { display:none; font-size:13px; line-height:1.6; color:var(--err); padding:10px; background:#241a1a; border:1px solid #4a2323; border-radius:10px; }
   .bigbtn { width:100%; padding:16px; background:var(--accent); color:#fff; border:none; border-radius:12px; font-size:17px; font-weight:600; }
   .bigbtn[disabled] { opacity:.6; }
 
-  #player { padding:16px; display:none; flex-direction:column; gap:14px; height:100%; }
+  #player { padding:14px; display:none; flex-direction:column; gap:12px; height:100%; }
   #statusbar { font-size:13px; color:var(--dim); text-align:center; }
-  #current { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; font-size:30px; line-height:1.6; font-weight:500; padding:10px; word-break:break-word; }
+  #current { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; font-size:28px; line-height:1.6; font-weight:500; padding:10px; word-break:break-word; }
   #progress { text-align:center; font-size:14px; color:var(--dim); }
   #ctl { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   #ctl button { padding:14px; border-radius:12px; border:none; font-size:16px; font-weight:600; }
@@ -42,7 +46,8 @@
 
 <div id="setup">
   <h1>口播跟读提词器</h1>
-  <div class="hint">① 请用手机<b>系统浏览器（Chrome）</b>打开本页，不要在飞书/微信内打开；② 粘贴文案；③ 点「开始」，首次会弹麦克风权限，点「允许」。</div>
+  <div id="diag">正在检测浏览器能力…</div>
+  <div class="hint">粘贴文案，点「开始」。若浏览器支持麦克风则自动跟读；不支持则切换「手动翻句」（念完点屏幕翻下一句）。</div>
   <textarea id="text" placeholder="把口播文案粘贴到这里……"></textarea>
   <div class="row"><label>朗读语音</label><select id="voiceSel"></select></div>
   <div class="row"><label>语速</label><input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="0.9"><span class="val" id="rateVal">0.90x</span></div>
@@ -66,77 +71,101 @@
 <script>
 (function(){
   "use strict";
-  const $ = id => document.getElementById(id);
-  const setup=$('setup'), player=$('player'), textEl=$('text'), voiceSel=$('voiceSel');
-  const rateEl=$('rate'), rateVal=$('rateVal'), pauseEl=$('pause'), pauseVal=$('pauseVal');
-  const msgEl=$('msg');
-  const curEl=$('current'), progEl=$('progress'), dotEl=$('dot'), statusText=$('statusText');
-  const btnStart=$('btnStart'), btnPause=$('btnPause'), btnReplay=$('btnReplay'), btnSkip=$('btnSkip'), btnExit=$('btnExit');
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  var $ = function(id){ return document.getElementById(id); };
+  var setup=$('setup'), player=$('player'), textEl=$('text'), voiceSel=$('voiceSel');
+  var rateEl=$('rate'), rateVal=$('rateVal'), pauseEl=$('pause'), pauseVal=$('pauseVal');
+  var msgEl=$('msg'), diagEl=$('diag');
+  var curEl=$('current'), progEl=$('progress'), dotEl=$('dot'), statusText=$('statusText');
+  var btnStart=$('btnStart'), btnPause=$('btnPause'), btnReplay=$('btnReplay'), btnSkip=$('btnSkip'), btnExit=$('btnExit');
+  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r, ms); }); };
 
-  const synth = window.speechSynthesis;
-  let voice=null, rate=0.9, pauseSeconds=1.5, voiceThreshold=0.02;
-  let audioCtx=null, analyser=null, micStream=null, dataArray=null;
-  let sentences=[], idx=0, running=false, gen=0;
+  // ---------- 能力检测 ----------
+  var hasMic = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  var hasTTS = !!window.speechSynthesis;
+  var secure = !!window.isSecureContext;
 
-  function showMsg(text){ msgEl.textContent=text; msgEl.style.display=text?'block':'none'; }
-
-  // 环境自检：是否安全上下文（拿麦克风的前提）
-  if(!window.isSecureContext){
-    showMsg('⚠ 当前页面不是 HTTPS 安全环境，麦克风不可用。请用系统浏览器访问 https 开头的链接。');
+  function browserName(){
+    var ua = navigator.userAgent || '';
+    if(/Edg\//.test(ua)) return 'Edge';
+    if(/MicroMessenger/.test(ua)) return '微信内置浏览器';
+    if(/Lark|Feishu|BytedanceWebview|bytedance/.test(ua)) return '飞书内置浏览器';
+    if(/Chrome\//.test(ua)) return 'Chrome 内核';
+    if(/Firefox\//.test(ua)) return 'Firefox';
+    if(/Safari\//.test(ua) && !/Chrome/.test(ua)) return 'Safari';
+    if(/UCBrowser/.test(ua)) return 'UC 浏览器';
+    if(/MQQBrowser/.test(ua)) return 'QQ 浏览器';
+    return '未知浏览器';
   }
 
+  function renderDiag(){
+    var b = browserName();
+    var s = '浏览器：<b>'+b+'</b><br>';
+    s += 'HTTPS 安全环境：' + (secure ? '<span class="ok">✓ 支持</span>' : '<span class="bad">✗ 不支持</span>') + '<br>';
+    s += '语音朗读(TTS)：' + (hasTTS ? '<span class="ok">✓ 支持</span>' : '<span class="bad">✗ 不支持</span>') + '<br>';
+    s += '麦克风(自动跟读)：' + (hasMic ? '<span class="ok">✓ 支持</span>' : '<span class="bad">✗ 不支持（将用手动翻句）</span>');
+    diagEl.innerHTML = s;
+  }
+  try { renderDiag(); } catch(e){}
+
+  // ---------- 状态 ----------
+  var synth = window.speechSynthesis || null;
+  var voice=null, rate=0.9, pauseSeconds=1.5, voiceThreshold=0.02;
+  var audioCtx=null, analyser=null, micStream=null, dataArray=null;
+  var sentences=[], idx=0, running=false, gen=0, autoMode=false;
+
+  function showMsg(t){ msgEl.textContent=t; msgEl.style.display = t ? 'block' : 'none'; }
+
   function splitSentences(text){
-    const res=[]; let cur='';
-    for(const ch of text){
-      cur+=ch;
-      if('。！？；…\n'.includes(ch)){ const s=cur.trim(); if(s) res.push(s); cur=''; }
+    var res=[]; var cur='';
+    for(var i=0;i<text.length;i++){
+      var ch=text.charAt(i); cur+=ch;
+      if('。！？；…\n'.indexOf(ch)>=0){ var s=cur.trim(); if(s) res.push(s); cur=''; }
     }
-    const tail=cur.trim(); if(tail) res.push(tail);
+    var tail=cur.trim(); if(tail) res.push(tail);
     return res;
   }
 
   function loadVoices(){
-    const vs = synth.getVoices().filter(v=>/zh|cmn|mandarin/i.test(v.lang+' '+v.name));
-    voiceSel.innerHTML='';
-    if(!vs.length){ const o=document.createElement('option'); o.textContent='默认中文语音'; o.value=''; voiceSel.appendChild(o); return; }
-    vs.forEach(v=>{ const o=document.createElement('option'); o.textContent=v.name+'（'+v.lang+'）'; o.value=v.name; voiceSel.appendChild(o); });
-    voice=vs[0]||null;
+    if(!synth) return;
+    try {
+      var vs = synth.getVoices().filter(function(v){ return /zh|cmn|mandarin/i.test(v.lang+' '+v.name); });
+      voiceSel.innerHTML='';
+      if(!vs.length){ var o=document.createElement('option'); o.textContent='默认中文语音'; o.value=''; voiceSel.appendChild(o); return; }
+      vs.forEach(function(v){ var o=document.createElement('option'); o.textContent=v.name+'（'+v.lang+'）'; o.value=v.name; voiceSel.appendChild(o); });
+      voice=vs[0]||null;
+    } catch(e){}
   }
   loadVoices();
-  if(typeof synth.onvoiceschanged!=='undefined') synth.onvoiceschanged=loadVoices;
+  try { if(synth && typeof synth.onvoiceschanged!=='undefined') synth.onvoiceschanged=loadVoices; } catch(e){}
   function pickVoice(){
-    const name=voiceSel.value;
-    const all=synth.getVoices();
-    return all.find(v=>v.name===name) || all.find(v=>/zh|cmn/i.test(v.lang)) || null;
+    if(!synth) return null;
+    var name=voiceSel.value; var all=synth.getVoices();
+    return all.find(function(v){return v.name===name;}) || all.find(function(v){return /zh|cmn/i.test(v.lang);}) || null;
   }
 
   function speak(text){
-    return new Promise(resolve=>{
-      try{ synth.cancel(); }catch(e){}
-      const u=new SpeechSynthesisUtterance(text);
+    return new Promise(function(resolve){
+      if(!synth){ resolve(); return; }
+      try { synth.cancel(); } catch(e){}
+      var u=new SpeechSynthesisUtterance(text);
       u.lang='zh-CN'; u.rate=rate;
-      const v=pickVoice(); if(v) u.voice=v;
-      let done=false; const finish=()=>{ if(!done){ done=true; resolve(); } };
+      var v=pickVoice(); if(v) u.voice=v;
+      var done=false; var finish=function(){ if(!done){ done=true; resolve(); } };
       u.onend=finish; u.onerror=finish;
-      try{ if(synth.paused) synth.resume(); }catch(e){}
+      try { if(synth.paused) synth.resume(); } catch(e){}
       synth.speak(u);
-      const estMs = Math.max(2000, text.length*400/rate + 1500);
+      var estMs=Math.max(2000, text.length*400/rate + 1500);
       setTimeout(finish, estMs);
     });
   }
 
-  function getUserMediaWithTimeout(constraints, timeout){
-    return new Promise((resolve,reject)=>{
-      const t=setTimeout(()=>reject(new Error('请求麦克风超时（10 秒无响应）。请确认：1) 页面是 https；2) 浏览器弹出了权限框并点了「允许」；3) 用的是系统 Chrome 而非飞书内嵌浏览器')), timeout);
-      navigator.mediaDevices.getUserMedia(constraints).then(s=>{ clearTimeout(t); resolve(s); }).catch(e=>{ clearTimeout(t); reject(e); });
+  function getUserMediaWithTimeout(c, t){
+    return new Promise(function(resolve,reject){
+      var to=setTimeout(function(){ reject(new Error('请求麦克风超时')); }, t);
+      navigator.mediaDevices.getUserMedia(c).then(function(s){ clearTimeout(to); resolve(s); }).catch(function(e){ clearTimeout(to); reject(e); });
     });
   }
-
   async function startMic(){
-    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      throw new Error('此浏览器不支持麦克风。请用手机系统 Chrome 打开。');
-    }
     micStream=await getUserMediaWithTimeout({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}, 10000);
     audioCtx=new (window.AudioContext||window.webkitAudioContext)();
     await audioCtx.resume();
@@ -145,33 +174,40 @@
     dataArray=new Uint8Array(analyser.fftSize);
   }
   function stopMic(){
-    if(micStream){ try{ micStream.getTracks().forEach(t=>t.stop()); }catch(e){} micStream=null; }
+    if(micStream){ try{ micStream.getTracks().forEach(function(t){t.stop();}); }catch(e){} micStream=null; }
     if(audioCtx){ try{ audioCtx.close(); }catch(e){} audioCtx=null; analyser=null; }
   }
   function getLevel(){
     if(!analyser) return 0;
     analyser.getByteTimeDomainData(dataArray);
-    let s=0; for(let i=0;i<dataArray.length;i++){ const v=(dataArray[i]-128)/128; s+=v*v; }
+    var s=0; for(var i=0;i<dataArray.length;i++){ var v=(dataArray[i]-128)/128; s+=v*v; }
     return Math.sqrt(s/dataArray.length);
   }
   async function calibrate(){
     setStatus('校准环境音量，请保持安静…');
-    const samples=[]; const t0=performance.now();
+    var samples=[]; var t0=performance.now();
     while(performance.now()-t0<1500){ samples.push(getLevel()); await sleep(30); }
-    samples.sort((a,b)=>a-b);
-    const baseline=samples[Math.floor(samples.length*0.6)]||0.01;
+    samples.sort(function(a,b){return a-b;});
+    var baseline=samples[Math.floor(samples.length*0.6)]||0.01;
     voiceThreshold=Math.max(baseline*3.5, 0.015);
   }
 
   function setStatus(t,s){ statusText.textContent=t; dotEl.className=''; if(s) dotEl.classList.add(s); }
   function render(){ curEl.textContent=sentences[idx]||''; progEl.textContent='第 '+(idx+1)+' / '+sentences.length+' 句'; }
 
+  // 自动：等待跟读；手动：等待点屏幕
   function waitForFollow(myGen){
-    return new Promise(resolve=>{
-      let started=false, lastVoice=0;
+    if(!autoMode){
+      return new Promise(function(resolve){
+        setStatus('念完请点屏幕翻下一句','listening');
+        manualNext = resolve;
+      });
+    }
+    return new Promise(function(resolve){
+      var started=false, lastVoice=0;
       function tick(){
         if(!running || gen!==myGen){ resolve(); return; }
-        const lvl=getLevel(); const now=performance.now();
+        var lvl=getLevel(); var now=performance.now();
         if(!started){
           if(lvl>voiceThreshold){ started=true; lastVoice=now; setStatus('正在听你跟读…','following'); }
         } else {
@@ -184,9 +220,10 @@
       requestAnimationFrame(tick);
     });
   }
+  var manualNext = null;
 
   async function run(){
-    const myGen=++gen;
+    var myGen=++gen;
     running=true; btnPause.textContent='暂停';
     try{
       while(running && myGen===gen && idx<sentences.length){
@@ -203,7 +240,7 @@
       if(running && myGen===gen && idx>=sentences.length){
         setStatus('全部读完 ✓','following'); curEl.textContent='（完）';
       }
-    }catch(e){ setStatus('出错了：'+e.message); console.error(e); }
+    }catch(e){ setStatus('出错了：'+e.message); }
     finally{ if(myGen===gen){ running=false; } }
   }
 
@@ -211,51 +248,55 @@
   function replay(){ cancelTTS(); gen++; run(); }
   function skip(){ cancelTTS(); gen++; if(idx<sentences.length-1) idx++; run(); }
 
-  rateEl.addEventListener('input',()=>{ rate=parseFloat(rateEl.value); rateVal.textContent=rate.toFixed(2)+'x'; });
-  pauseEl.addEventListener('input',()=>{ pauseSeconds=parseFloat(pauseEl.value); pauseVal.textContent=pauseSeconds.toFixed(1)+'s'; });
+  rateEl.addEventListener('input',function(){ rate=parseFloat(rateEl.value); rateVal.textContent=rate.toFixed(2)+'x'; });
+  pauseEl.addEventListener('input',function(){ pauseSeconds=parseFloat(pauseEl.value); pauseVal.textContent=pauseSeconds.toFixed(1)+'s'; });
 
-  btnStart.addEventListener('click', async ()=>{
-    const text=textEl.value.trim();
+  btnStart.addEventListener('click', async function(){
+    var text=textEl.value.trim();
     if(!text){ showMsg('请先在上方粘贴口播文案，再点开始。'); return; }
-    if(!window.isSecureContext){ showMsg('当前不是 HTTPS 环境，麦克风不可用。请用系统浏览器访问 https://lexislaw2021.github.io/teleprompter/'); return; }
+    if(!hasTTS){ showMsg('此浏览器不支持语音朗读，无法使用。建议换一个浏览器（如夸克/百度/系统自带浏览器）打开本页。'); return; }
     sentences=splitSentences(text);
     if(!sentences.length){ showMsg('文案切不出句子，请检查内容。'); return; }
-    // 即时反馈：禁用按钮、显示状态
-    btnStart.disabled=true; btnStart.textContent='正在请求麦克风权限…';
-    showMsg('');
-    try{ localStorage.setItem('teleprompter_text', textEl.value); }catch(e){}
-    try{
-      await startMic();
-      await calibrate();
-    }catch(e){
-      btnStart.disabled=false; btnStart.textContent='开始';
-      const name = e.name || '';
-      let tip = '麦克风无法使用：'+e.message;
-      if(name==='NotAllowedError') tip='麦克风权限被拒绝了。请点浏览器地址栏左侧的锁图标，允许麦克风权限后重试。';
-      else if(name==='NotFoundError') tip='没检测到麦克风设备，请确认手机有麦克风且未被其他应用占用。';
-      showMsg(tip);
-      return;
+
+    autoMode = hasMic && secure;
+    if(autoMode){
+      btnStart.disabled=true; btnStart.textContent='正在请求麦克风权限…';
+      try{ await startMic(); await calibrate(); }
+      catch(e){
+        btnStart.disabled=false; btnStart.textContent='开始';
+        autoMode=false;
+        showMsg('麦克风不可用（'+e.message+'），已切换为「手动翻句」模式：念完点屏幕翻下一句。');
+      }
+    } else {
+      showMsg('已进入「手动翻句」模式：每句读完，你跟着念，念完点一下屏幕翻下一句。');
     }
+
+    try{ localStorage.setItem('teleprompter_text', textEl.value); }catch(e){}
     btnStart.disabled=false; btnStart.textContent='开始';
     player.style.display='flex'; setup.style.display='none';
     idx=0; render(); run();
   });
 
-  btnPause.addEventListener('click', ()=>{
+  btnPause.addEventListener('click', function(){
     if(running){ running=false; cancelTTS(); btnPause.textContent='继续'; setStatus('已暂停',''); }
     else { run(); }
   });
   btnReplay.addEventListener('click', replay);
   btnSkip.addEventListener('click', skip);
-  btnExit.addEventListener('click', ()=>{ running=false; gen++; cancelTTS(); stopMic(); btnPause.textContent='暂停'; player.style.display='none'; setup.style.display='flex'; });
+  btnExit.addEventListener('click', function(){ running=false; gen++; cancelTTS(); stopMic(); btnPause.textContent='暂停'; player.style.display='none'; setup.style.display='flex'; });
 
-  curEl.addEventListener('click', skip);
+  // 手动模式：点屏幕翻句
+  curEl.addEventListener('click', function(){
+    if(!running) return;
+    if(manualNext){ var f=manualNext; manualNext=null; f(); return; }
+    skip();
+  });
 
-  let wakeLock=null;
+  var wakeLock=null;
   async function keepAwake(){ try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){} }
   btnStart.addEventListener('click', keepAwake);
 
-  try{ const saved=localStorage.getItem('teleprompter_text'); if(saved) textEl.value=saved; }catch(e){}
+  try { var saved=localStorage.getItem('teleprompter_text'); if(saved) textEl.value=saved; }catch(e){}
 })();
 </script>
 </body>
