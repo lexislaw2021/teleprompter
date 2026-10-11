@@ -89,6 +89,11 @@
     <input type="range" id="resumeDelay" min="0" max="5" step="0.5" value="2.0">
     <span class="val" id="resumeDelayVal">2.0s</span>
   </div>
+  <div class="row">
+    <label>停等触发</label>
+    <input type="range" id="stallDelay" min="1" max="5" step="0.5" value="2.5">
+    <span class="val" id="stallDelayVal">2.5s</span>
+  </div>
 
   <button class="btn" id="btn">生成并开始</button>
 
@@ -131,6 +136,7 @@ const $ = id => document.getElementById(id);
 const elText = $('text'), elVoice = $('voice'), elRate = $('rate'), elRateVal = $('rateVal');
 const elVol = $('vol'), elVolVal = $('volVal');
 const elResumeDelay = $('resumeDelay'), elResumeDelayVal = $('resumeDelayVal');
+const elStallDelay = $('stallDelay'), elStallDelayVal = $('stallDelayVal');
 const elBtn = $('btn'), elStatus = $('status'), elScript = $('script');
 const elBtnPause = $('btnPause'), elBtnReset = $('btnReset'), elCheck = $('check');
 const elMeterFill = $('meterFill'), elMeterState = $('meterState');
@@ -145,7 +151,7 @@ const MIN_RATE = 0.5, MAX_RATE = 1.5;
 let playing = false, waiting = false, paused = false, finished = false;
 let lastVoice = 0, recentSamples = [], monitorTimer = null, resumeAt = 0, resumeDelay = 2000;
 let voiceThreshold = 0.03;
-const STALL_MS = 1600;
+let stallMs = 2500; // 连续停多久才暂停（毫秒），可调
 
 function setStatus(msg, cls) { elStatus.textContent = msg; elStatus.className = cls || ''; }
 
@@ -199,6 +205,7 @@ refreshCredState();
 elRate.addEventListener('input', () => { baseRate = parseFloat(elRate.value); elRateVal.textContent = baseRate.toFixed(2) + '×'; });
 elVol.addEventListener('input', () => { volumeBoost = parseFloat(elVol.value); elVolVal.textContent = volumeBoost.toFixed(1) + '×'; });
 elResumeDelay.addEventListener('input', () => { resumeDelay = parseFloat(elResumeDelay.value) * 1000; elResumeDelayVal.textContent = parseFloat(elResumeDelay.value).toFixed(1) + 's'; });
+elStallDelay.addEventListener('input', () => { stallMs = parseFloat(elStallDelay.value) * 1000; elStallDelayVal.textContent = parseFloat(elStallDelay.value).toFixed(1) + 's'; });
 
 // ---------- 工具 ----------
 function percentEncode(s) { return encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase()); }
@@ -371,8 +378,8 @@ function startMonitor() {
     updateMeter(level, speaking);
     if (speaking) lastVoice = now;
 
-    // 卡壳：连续 1.6 秒没说话 → 真正暂停等
-    if (now - lastVoice > STALL_MS) {
+    // 卡壳：连续停下超过「停等触发」时间 → 真正暂停等
+    if (now - lastVoice > stallMs) {
       if (!waiting) {
         waiting = true;
         audio.pause();
