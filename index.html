@@ -300,6 +300,20 @@ function getLevel() {
   for (let i = 0; i < dataArr.length; i++) { const v = (dataArr[i] - 128) / 128; s += v * v; }
   return Math.sqrt(s / dataArr.length);
 }
+
+// ---------- 动态串音基线：区分「你的声音」和「耳机漏出来的 TTS 声音」 ----------
+let levelHistory = [];
+let lastLevel = 0;
+function isSpeaking(level) {
+  lastLevel = level;
+  levelHistory.push(level);
+  if (levelHistory.length > 30) levelHistory.shift(); // 约 9 秒
+  if (levelHistory.length < 6) return level > voiceThreshold; // 初期用固定阈值
+  const sorted = [...levelHistory].sort((a, b) => a - b);
+  const base = sorted[Math.floor(sorted.length * 0.2)]; // 20% 分位数 ≈ 串音基线（你停下时的电平）
+  const threshold = Math.max(base * 2.0, voiceThreshold * 1.5, 0.02);
+  return level > threshold;
+}
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function calibrate() {
   const samples = [];
@@ -316,7 +330,8 @@ function startMonitor() {
   monitorTimer = setInterval(() => {
     if (!playing || paused || finished || !audio) return;
     const now = performance.now();
-    const speaking = getLevel() > voiceThreshold;
+    const level = getLevel();
+    const speaking = isSpeaking(level);
     if (speaking) lastVoice = now;
     recentSamples.push(speaking ? 1 : 0);
     if (recentSamples.length > 10) recentSamples.shift(); // 约 3 秒窗口
@@ -345,7 +360,7 @@ function startMonitor() {
       else target = MIN_RATE + (ratio - 0.25) / 0.55 * (MAX_RATE - MIN_RATE);
       currentRate += (target - currentRate) * 0.4; // 平滑过渡
       audio.playbackRate = currentRate;
-      if (!waiting) setStatus('跟读中 · 语速 ' + currentRate.toFixed(2) + '×', 'playing');
+      if (!waiting) setStatus('跟读中 · 语速 ' + currentRate.toFixed(2) + '× · 电平 ' + lastLevel.toFixed(3), 'playing');
     }
   }, 300);
 }
