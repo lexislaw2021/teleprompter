@@ -315,30 +315,39 @@ function startMonitor() {
   if (monitorTimer) clearInterval(monitorTimer);
   monitorTimer = setInterval(() => {
     if (!playing || paused || finished || !audio) return;
+    const now = performance.now();
     const speaking = getLevel() > voiceThreshold;
-    if (speaking) lastVoice = performance.now();
+    if (speaking) lastVoice = now;
     recentSamples.push(speaking ? 1 : 0);
-    if (recentSamples.length > 24) recentSamples.shift();
+    if (recentSamples.length > 10) recentSamples.shift(); // 约 3 秒窗口
 
-    const last3 = recentSamples.slice(-3);
-    const stalled = last3.length >= 3 && last3.every(v => v === 0);
-    if (stalled && !waiting) {
-      waiting = true;
-      audio.playbackRate = 0.06;
-      setStatus('你停下来了，等你跟上…', 'waiting');
-    } else if (waiting && speaking) {
-      waiting = false;
-      audio.playbackRate = currentRate;
-      setStatus('继续跟读', 'playing');
-    } else if (!waiting && !stalled) {
-      const ratio = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
-      if (recentSamples.length >= 10) {
-        if (ratio > 0.62 && currentRate < MAX_RATE) currentRate = Math.min(currentRate + 0.02, MAX_RATE);
-        else if (ratio < 0.35 && currentRate > MIN_RATE) currentRate = Math.max(currentRate - 0.02, MIN_RATE);
-        audio.playbackRate = currentRate;
+    // 卡壳：用户完全停 1.5 秒 → 停等
+    if (now - lastVoice > 1500) {
+      if (!waiting) {
+        waiting = true;
+        audio.playbackRate = 0.06;
+        setStatus('你停下来了，等你跟上…', 'waiting');
       }
+      return;
     }
-  }, 500);
+    if (waiting) {
+      waiting = false;
+      setStatus('继续跟读', 'playing');
+    }
+
+    // 快慢自适应：语音占比 → 目标语速（连续映射，无死区）
+    if (recentSamples.length >= 5) {
+      const ratio = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
+      // ratio 0.25 → MIN，ratio 0.8 → MAX，中间线性
+      let target;
+      if (ratio <= 0.25) target = MIN_RATE;
+      else if (ratio >= 0.8) target = MAX_RATE;
+      else target = MIN_RATE + (ratio - 0.25) / 0.55 * (MAX_RATE - MIN_RATE);
+      currentRate += (target - currentRate) * 0.4; // 平滑过渡
+      audio.playbackRate = currentRate;
+      if (!waiting) setStatus('跟读中 · 语速 ' + currentRate.toFixed(2) + '×', 'playing');
+    }
+  }, 300);
 }
 
 // ---------- 播放 ----------
