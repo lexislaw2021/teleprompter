@@ -329,15 +329,19 @@ function getLevel() {
 // ---------- 动态串音基线：区分「你的声音」和「耳机漏出来的 TTS 声音」 ----------
 let levelHistory = [];
 let lastLevel = 0;
+let speakingHold = 0;
 function isSpeaking(level) {
   lastLevel = level;
   levelHistory.push(level);
   if (levelHistory.length > 30) levelHistory.shift(); // 约 9 秒
-  if (levelHistory.length < 6) return level > voiceThreshold; // 初期用固定阈值
   const sorted = [...levelHistory].sort((a, b) => a - b);
-  const base = sorted[Math.floor(sorted.length * 0.2)]; // 20% 分位数 ≈ 串音基线（你停下时的电平）
-  const threshold = Math.max(base * 2.0, voiceThreshold * 1.5, 0.02);
-  return level > threshold;
+  const base = sorted[Math.max(0, Math.floor(sorted.length * 0.05))]; // 5% 分位数 ≈ 底噪（漏音/环境）
+  const threshold = Math.max(base * 3.0, 0.008); // 底噪的 3 倍，或绝对底线 0.008
+  const speaking = level > threshold;
+  // 说话保持：说话后延续 2 个采样周期（0.6s），避免语句间短暂停顿抖动
+  if (speaking) speakingHold = 2;
+  else if (speakingHold > 0) speakingHold--;
+  return speakingHold > 0;
 }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function calibrate() {
@@ -359,34 +363,20 @@ function startMonitor() {
     const speaking = isSpeaking(level);
     updateMeter(level, speaking);
     if (speaking) lastVoice = now;
-    recentSamples.push(speaking ? 1 : 0);
-    if (recentSamples.length > 10) recentSamples.shift(); // 约 3 秒窗口
 
-    // 卡壳：用户完全停 1.5 秒 → 停等
-    if (now - lastVoice > 1500) {
+    // 卡壳：连续 1.6 秒没说话 → 真正暂停等
+    if (now - lastVoice > STALL_MS) {
       if (!waiting) {
         waiting = true;
-        audio.playbackRate = 0.06;
+        audio.pause();
         setStatus('你停下来了，等你跟上…', 'waiting');
       }
       return;
     }
     if (waiting) {
       waiting = false;
-      setStatus('继续跟读', 'playing');
-    }
-
-    // 快慢自适应：语音占比 → 目标语速（连续映射，无死区）
-    if (recentSamples.length >= 5) {
-      const ratio = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
-      // ratio 0.25 → MIN，ratio 0.8 → MAX，中间线性
-      let target;
-      if (ratio <= 0.25) target = MIN_RATE;
-      else if (ratio >= 0.8) target = MAX_RATE;
-      else target = MIN_RATE + (ratio - 0.25) / 0.55 * (MAX_RATE - MIN_RATE);
-      currentRate += (target - currentRate) * 0.4; // 平滑过渡
-      audio.playbackRate = currentRate;
-      if (!waiting) setStatus('跟读中 · 语速 ' + currentRate.toFixed(2) + '× · 电平 ' + lastLevel.toFixed(3), 'playing');
+      audio.play();
+      setStatus('继续跟读 · 电平 ' + lastLevel.toFixed(3), 'playing');
     }
   }, 300);
 }
