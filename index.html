@@ -2,270 +2,352 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>口播跟读提词器</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>口播跟读提词器 · AI 调速</title>
 <style>
-  :root { --bg:#0f1115; --panel:#181b22; --fg:#e8eaf0; --dim:#9aa3b2; --accent:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; }
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e8eaed; --dim:#9aa0a6; --accent:#4c8bf5; --ok:#34a853; --warn:#f9ab00; --err:#ea4335; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; height:100%; }
-  body { display:flex; flex-direction:column; height:100dvh; overflow:hidden; }
-  #setup { padding:14px; display:flex; flex-direction:column; gap:10px; height:100%; }
+  body { display:flex; flex-direction:column; max-width:720px; margin:0 auto; padding:12px; gap:10px; }
   h1 { font-size:18px; margin:0; font-weight:600; }
-  #diag { font-size:12px; line-height:1.9; padding:10px; background:var(--panel); border:1px solid #2a2f3a; border-radius:10px; color:var(--dim); }
-  #diag b { color:var(--fg); } #diag .ok { color:var(--ok); } #diag .bad { color:var(--err); }
-  .hint { font-size:12px; color:var(--dim); line-height:1.6; }
-  textarea { width:100%; flex:1; min-height:110px; background:var(--panel); border:1px solid #2a2f3a; border-radius:10px; color:var(--fg); padding:12px; font-size:15px; line-height:1.7; resize:none; }
-  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .row label { font-size:14px; white-space:nowrap; }
-  select { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:8px; font-size:14px; max-width:58%; }
-  input[type=range] { flex:1; accent-color:var(--accent); }
-  .val { font-size:13px; color:var(--accent); min-width:44px; text-align:right; }
-  #msg { display:none; font-size:13px; line-height:1.6; color:var(--err); padding:10px; background:#241a1a; border:1px solid #4a2323; border-radius:10px; }
-  .bigbtn { width:100%; padding:16px; background:var(--accent); color:#fff; border:none; border-radius:12px; font-size:17px; font-weight:600; }
-  #player { padding:14px; display:none; flex-direction:column; gap:12px; height:100%; }
-  #statusbar { font-size:13px; color:var(--dim); text-align:center; }
-  #current { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; font-size:26px; line-height:1.6; font-weight:500; padding:10px; word-break:break-word; }
-  #progress { text-align:center; font-size:14px; color:var(--dim); }
-  #ctl { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  #ctl button { padding:14px; border-radius:12px; border:none; font-size:16px; font-weight:600; }
-  #btnPause { grid-column:1 / -1; background:var(--accent); color:#fff; }
-  #btnReplay, #btnSkip { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a !important; }
-  #btnExit { grid-column:1 / -1; background:transparent; color:var(--dim); font-size:14px; }
-  #dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#666; margin-right:6px; vertical-align:middle; }
-  #dot.speaking { background:#f5b94f; } #dot.listening { background:var(--accent); } #dot.following { background:var(--ok); }
+  .sub { color:var(--dim); font-size:12px; }
+  textarea { width:100%; height:120px; background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; border-radius:8px; padding:10px; font-size:15px; resize:vertical; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; color:var(--dim); }
+  select, input[type=range] { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; border-radius:6px; padding:6px; font-size:13px; }
+  input[type=range] { flex:1; }
+  #rateVal { color:var(--fg); min-width:34px; text-align:center; font-weight:600; }
+  .btn { width:100%; padding:14px; border:none; border-radius:10px; font-size:16px; font-weight:600; background:var(--accent); color:#fff; cursor:pointer; }
+  .btn:disabled { background:#3a4049; color:#9aa0a6; }
+  .btn.secondary { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a; }
+  #status { text-align:center; font-size:15px; min-height:24px; padding:8px; border-radius:8px; background:var(--panel); }
+  #status.waiting { background:#3d2f00; color:var(--warn); font-weight:700; }
+  #status.playing { color:var(--ok); }
+  #status.error { background:#3a1518; color:var(--err); }
+  #script { flex:1; overflow-y:auto; background:var(--panel); border-radius:10px; padding:16px; font-size:22px; line-height:1.8; letter-spacing:0.5px; white-space:pre-wrap; word-break:break-word; color:#cfd3da; min-height:120px; }
+  #script .hl { background:#33507a; border-radius:3px; }
+  #check { font-size:11px; color:var(--dim); line-height:1.7; }
+  #check .ok { color:var(--ok); } #check .bad { color:var(--err); }
+  .controls { display:flex; gap:8px; }
+  .controls .btn { flex:1; padding:10px; font-size:14px; }
+  .hint { font-size:12px; color:var(--dim); }
 </style>
 </head>
 <body>
+  <h1>口播跟读提词器 <span class="sub">· AI 调速（连续念 · 卡壳等你 · 快慢自适应）</span></h1>
 
-<div id="setup">
-  <h1>口播跟读提词器</h1>
-  <div id="diag">正在检测浏览器能力…</div>
-  <div class="hint">用 Edge 打开本页 → 粘贴文案 → 点「开始」→ 它连续念，你跟着念；你卡壳它自动停住等你，你跟上它接着念。</div>
-  <textarea id="text" placeholder="把口播文案粘贴到这里……"></textarea>
-  <div class="row"><label>朗读语音</label><select id="voiceSel"></select></div>
-  <div class="row"><label>语速</label><input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="0.9"><span class="val" id="rateVal">0.90x</span></div>
-  <div class="row"><label>卡壳等待</label><input type="range" id="pause" min="0.8" max="3" step="0.1" value="1.5"><span class="val" id="pauseVal">1.5s</span></div>
-  <div id="msg"></div>
-  <button class="bigbtn" id="btnStart">开始</button>
-</div>
+  <textarea id="text" placeholder="粘贴你要跟读的文案，然后点「生成并开始」"></textarea>
 
-<div id="player">
-  <div id="statusbar"><span id="dot"></span><span id="statusText">准备中…</span></div>
-  <div id="current"></div>
-  <div id="progress"></div>
-  <div id="ctl">
-    <button id="btnPause">暂停</button>
-    <button id="btnReplay">重读本段</button>
-    <button id="btnSkip">跳过本段</button>
-    <button id="btnExit">退出</button>
+  <div class="row">
+    <label>音色</label>
+    <select id="voice">
+      <option value="zh-CN-XiaoxiaoNeural" selected>晓晓（女·温柔）</option>
+      <option value="zh-CN-XiaoyiNeural">晓伊（女·活泼）</option>
+      <option value="zh-CN-YunxiNeural">云希（男·年轻）</option>
+      <option value="zh-CN-YunyangNeural">云扬（男·新闻）</option>
+    </select>
+    <label>基础语速</label>
+    <input type="range" id="rate" min="0.5" max="1.8" step="0.05" value="1.0">
+    <span id="rateVal">1.0×</span>
   </div>
-</div>
+
+  <button class="btn" id="btn">生成并开始</button>
+
+  <div id="status">请粘贴文案后点「生成并开始」</div>
+
+  <div id="script">跟读文案会显示在这里</div>
+
+  <div class="controls">
+    <button class="btn secondary" id="btnPause" disabled>暂停 / 继续</button>
+    <button class="btn secondary" id="btnReset" disabled>重新开始</button>
+  </div>
+
+  <div class="hint">💡 点「暂停/继续」可在跟读途中手动停走。建议戴耳机（耳机出声、麦克风收你的声音，互不干扰）。</div>
+  <div id="check"></div>
 
 <script>
-(function(){
-  "use strict";
-  var $ = function(id){ return document.getElementById(id); };
-  var setup=$('setup'), player=$('player'), textEl=$('text'), voiceSel=$('voiceSel');
-  var rateEl=$('rate'), rateVal=$('rateVal'), pauseEl=$('pause'), pauseVal=$('pauseVal');
-  var msgEl=$('msg'), diagEl=$('diag');
-  var curEl=$('current'), progEl=$('progress'), dotEl=$('dot'), statusText=$('statusText');
-  var btnStart=$('btnStart'), btnPause=$('btnPause'), btnReplay=$('btnReplay'), btnSkip=$('btnSkip'), btnExit=$('btnExit');
-  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r, ms); }); };
+'use strict';
+const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+const SEC_MS_GEC_VERSION = '1-143.0.3650.75';
+const MAX_TEXT_LEN = 3000;
 
-  var hasMic = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  var hasTTS = !!window.speechSynthesis;
-  var secure = !!window.isSecureContext;
+// ---------- 工具 ----------
+function sha256hex(s) {
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+    .then(buf => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase());
+}
+async function secMsGec() {
+  const WIN_EPOCH = 11644473600n;
+  let ticks = BigInt(Math.floor(Date.now() / 1000));
+  ticks += WIN_EPOCH;
+  ticks -= ticks % 300n;
+  ticks *= 10000000n;
+  return sha256hex(ticks.toString() + TRUSTED_CLIENT_TOKEN);
+}
+function connectId() {
+  if (crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '');
+  return Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function dateToString() {
+  const d = new Date();
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const p = n => String(n).padStart(2, '0');
+  return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${p(d.getUTCDate())} ${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} GMT+0000 (Coordinated Universal Time)`;
+}
+function escapeXml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
 
-  function browserName(){
-    var ua = navigator.userAgent || '';
-    if(/Edg\//.test(ua)) return 'Edge';
-    if(/MicroMessenger/.test(ua)) return '微信内置';
-    if(/Lark|Feishu|bytedance/i.test(ua)) return '飞书内置';
-    if(/Chrome\//.test(ua)) return 'Chrome 内核';
-    if(/Firefox\//.test(ua)) return 'Firefox';
-    return '其他';
-  }
-  function renderDiag(){
-    var s='浏览器：<b>'+browserName()+'</b><br>';
-    s+='语音朗读：'+(hasTTS?'<span class="ok">✓ 支持</span>':'<span class="bad">✗ 不支持（请装 Edge）</span>')+'<br>';
-    s+='麦克风：'+(hasMic?'<span class="ok">✓ 支持</span>':'<span class="bad">✗ 不支持</span>');
-    diagEl.innerHTML=s;
-  }
-  try{ renderDiag(); }catch(e){}
+// ---------- Edge TTS 直连生成音频 ----------
+async function edgeTTS(text, voice, onProgress) {
+  const gec = await secMsGec();
+  const url = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1'
+    + '?TrustedClientToken=' + TRUSTED_CLIENT_TOKEN
+    + '&ConnectionId=' + connectId()
+    + '&Sec-MS-GEC=' + gec
+    + '&Sec-MS-GEC-Version=' + SEC_MS_GEC_VERSION;
 
-  var synth = window.speechSynthesis || null;
-  var voice=null, rate=0.9, stuckSeconds=1.5, voiceThreshold=0.02;
-  var audioCtx=null, analyser=null, micStream=null, dataArray=null;
-  var segments=[], idx=0, running=false, gen=0;
-  var lastVoiceTime=0, hasUserStarted=false;
+  return new Promise((resolve, reject) => {
+    let ws;
+    try { ws = new WebSocket(url); } catch (e) { reject(new Error('浏览器不支持 WebSocket')); return; }
+    ws.binaryType = 'arraybuffer';
+    const chunks = [];
+    let gotAudio = false, settled = false;
 
-  function showMsg(t){ msgEl.textContent=t; msgEl.style.display = t ? 'block' : 'none'; }
+    ws.onopen = () => {
+      const config = 'X-Timestamp:' + dateToString() + '\r\n'
+        + 'Content-Type:application/json; charset=utf-8\r\n'
+        + 'Path:speech.config\r\n\r\n'
+        + '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+      ws.send(config);
+      const ssml = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+        + "<voice name='" + voice + "'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>"
+        + escapeXml(text) + '</prosody></voice></speak>';
+      const ssmlMsg = 'X-RequestId:' + connectId() + '\r\n'
+        + 'Content-Type:application/ssml+xml\r\n'
+        + 'X-Timestamp:' + dateToString() + 'Z\r\n'
+        + 'Path:ssml\r\n\r\n' + ssml;
+      ws.send(ssmlMsg);
+    };
 
-  // 按标点切短片段（连续朗读用，切细一点响应快）
-  function splitSegments(text){
-    var res=[]; var cur=''; var punct='，。！？；：、…,.!?;:\n';
-    for(var i=0;i<text.length;i++){
-      var ch=text.charAt(i); cur+=ch;
-      if(punct.indexOf(ch)>=0){ var s=cur.trim(); if(s) res.push(s); cur=''; }
-    }
-    var tail=cur.trim(); if(tail) res.push(tail);
-    return res;
-  }
-
-  function loadVoices(){
-    if(!synth) return;
-    try{
-      var vs=synth.getVoices().filter(function(v){return /zh|cmn|mandarin/i.test(v.lang+' '+v.name);});
-      voiceSel.innerHTML='';
-      if(!vs.length){ var o=document.createElement('option'); o.textContent='默认中文语音'; o.value=''; voiceSel.appendChild(o); return; }
-      vs.forEach(function(v){ var o=document.createElement('option'); o.textContent=v.name+'（'+v.lang+'）'; o.value=v.name; voiceSel.appendChild(o); });
-      voice=vs[0]||null;
-    }catch(e){}
-  }
-  loadVoices();
-  try{ if(synth && typeof synth.onvoiceschanged!=='undefined') synth.onvoiceschanged=loadVoices; }catch(e){}
-  function pickVoice(){
-    if(!synth) return null;
-    var name=voiceSel.value, all=synth.getVoices();
-    return all.find(function(v){return v.name===name;}) || all.find(function(v){return /zh|cmn/i.test(v.lang);}) || null;
-  }
-
-  function speak(text){
-    return new Promise(function(resolve){
-      if(!synth){ resolve(); return; }
-      try{ synth.cancel(); }catch(e){}
-      var u=new SpeechSynthesisUtterance(text);
-      u.lang='zh-CN'; u.rate=rate;
-      var v=pickVoice(); if(v) u.voice=v;
-      var done=false, finish=function(){ if(!done){ done=true; resolve(); } };
-      u.onend=finish; u.onerror=finish;
-      try{ if(synth.paused) synth.resume(); }catch(e){}
-      synth.speak(u);
-      var estMs=Math.max(1500, text.length*400/rate + 1000);
-      setTimeout(finish, estMs);
-    });
-  }
-
-  function getUserMediaWithTimeout(c,t){
-    return new Promise(function(resolve,reject){
-      var to=setTimeout(function(){ reject(new Error('请求麦克风超时')); }, t);
-      navigator.mediaDevices.getUserMedia(c).then(function(s){ clearTimeout(to); resolve(s); }).catch(function(e){ clearTimeout(to); reject(e); });
-    });
-  }
-  async function startMic(){
-    micStream=await getUserMediaWithTimeout({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}},10000);
-    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    await audioCtx.resume();
-    analyser=audioCtx.createAnalyser(); analyser.fftSize=1024;
-    audioCtx.createMediaStreamSource(micStream).connect(analyser);
-    dataArray=new Uint8Array(analyser.fftSize);
-  }
-  function stopMic(){
-    if(micStream){ try{ micStream.getTracks().forEach(function(t){t.stop();}); }catch(e){} micStream=null; }
-    if(audioCtx){ try{ audioCtx.close(); }catch(e){} audioCtx=null; analyser=null; }
-  }
-  function getLevel(){
-    if(!analyser) return 0;
-    analyser.getByteTimeDomainData(dataArray);
-    var s=0; for(var i=0;i<dataArray.length;i++){ var v=(dataArray[i]-128)/128; s+=v*v; }
-    return Math.sqrt(s/dataArray.length);
-  }
-  async function calibrate(){
-    setStatus('校准环境音量，请保持安静…');
-    var samples=[], t0=performance.now();
-    while(performance.now()-t0<1200){ samples.push(getLevel()); await sleep(30); }
-    samples.sort(function(a,b){return a-b;});
-    var baseline=samples[Math.floor(samples.length*0.6)]||0.01;
-    voiceThreshold=Math.max(baseline*3.5, 0.015);
-  }
-
-  function setStatus(t,s){ statusText.textContent=t; dotEl.className=''; if(s) dotEl.classList.add(s); }
-  function render(){ curEl.textContent=segments[idx]||''; progEl.textContent='第 '+(idx+1)+' / '+segments.length+' 段'; }
-
-  // 后台持续监听用户发声（更新 lastVoiceTime）
-  function monitor(){
-    if(!running) return;
-    if(getLevel()>voiceThreshold){ lastVoiceTime=performance.now(); hasUserStarted=true; }
-    requestAnimationFrame(monitor);
-  }
-
-  // 段间检查：用户卡壳则等待，直到他重新发声
-  function waitUserKeepUp(){
-    return new Promise(function(resolve){
-      function tick(){
-        if(!running || gen!==curGen){ resolve(); return; }
-        if(!hasUserStarted){ resolve(); return; }  // 还没开始跟读，不卡
-        var now=performance.now();
-        if(now-lastVoiceTime < stuckSeconds*1000){ resolve(); return; }  // 最近发声，跟上
-        setStatus('你停下来了，等你跟上…','listening');
-        requestAnimationFrame(tick);
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        // 收到 turn.end 表示合成结束，主动关闭以触发 onclose 拼接
+        if (e.data.indexOf('Path:turn.end') !== -1) { try { ws.close(); } catch (err) {} }
+        return;
       }
-      requestAnimationFrame(tick);
-    });
-  }
-  var curGen=0;
-
-  async function run(){
-    var myGen=++gen; curGen=myGen;
-    running=true; btnPause.textContent='暂停';
-    monitor();
-    try{
-      for(idx=0; idx<segments.length && running && gen===myGen; idx++){
-        render();
-        setStatus('朗读中（跟着念）','speaking');
-        await speak(segments[idx]);
-        if(!running || gen!==myGen) break;
-        await waitUserKeepUp();
+      const data = new Uint8Array(e.data);
+      if (data.length < 2) return;
+      const headerLen = (data[0] << 8) | data[1];
+      const header = new TextDecoder().decode(data.slice(2, 2 + headerLen));
+      if (header.indexOf('Path:audio') !== -1) {
+        chunks.push(data.slice(2 + headerLen));
+        gotAudio = true;
+        if (onProgress) onProgress(chunks.reduce((s, c) => s + c.length, 0));
       }
-      if(running && gen===myGen && idx>=segments.length){ setStatus('全部读完 ✓','following'); curEl.textContent='（完）'; }
-    }catch(e){ setStatus('出错了：'+e.message); }
-    finally{ if(myGen===gen){ running=false; } }
-  }
-
-  function cancelTTS(){ try{ synth.cancel(); }catch(e){} }
-  function replay(){ cancelTTS(); gen++; if(idx>0) idx--; run(); }
-  function skip(){ cancelTTS(); gen++; if(idx<segments.length-1) idx++; run(); }
-
-  rateEl.addEventListener('input',function(){ rate=parseFloat(rateEl.value); rateVal.textContent=rate.toFixed(2)+'x'; });
-  pauseEl.addEventListener('input',function(){ stuckSeconds=parseFloat(pauseEl.value); pauseVal.textContent=stuckSeconds.toFixed(1)+'s'; });
-
-  btnStart.addEventListener('click', async function(){
-    var text=textEl.value.trim();
-    if(!text){ showMsg('请先在上方粘贴口播文案，再点开始。'); return; }
-    if(!hasTTS){ showMsg('此浏览器不支持语音朗读。请安装 Edge 浏览器后用 Edge 打开本页。'); return; }
-    segments=splitSegments(text);
-    if(!segments.length){ showMsg('文案切不出内容，请检查。'); return; }
-    if(hasMic && secure){
-      btnStart.disabled=true; btnStart.textContent='正在请求麦克风权限…';
-      try{ await startMic(); await calibrate(); }
-      catch(e){
-        btnStart.disabled=false; btnStart.textContent='开始';
-        showMsg('麦克风不可用（'+e.message+'）。没有麦克风就做不了跟随暂停，请用 Edge 打开并允许麦克风。'); return;
+    };
+    ws.onerror = () => { if (!settled) { settled = true; reject(new Error('连接 Edge TTS 失败（可能网络受限）')); } };
+    ws.onclose = () => {
+      if (settled) return;
+      settled = true;
+      if (gotAudio && chunks.length) {
+        const total = chunks.reduce((s, c) => s + c.length, 0);
+        const buf = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { buf.set(c, off); off += c.length; }
+        resolve(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
+      } else {
+        reject(new Error('未收到音频，请重试'));
       }
-    } else if(!hasMic){
-      showMsg('此浏览器不支持麦克风，无法跟随你的节奏。请安装 Edge 浏览器。'); return;
-    }
-    try{ localStorage.setItem('teleprompter_text', textEl.value); }catch(e){}
-    btnStart.disabled=false; btnStart.textContent='开始';
-    player.style.display='flex'; setup.style.display='none';
-    lastVoiceTime=performance.now(); hasUserStarted=false;
-    idx=0; render(); run();
+    };
+    setTimeout(() => { if (!settled) { settled = true; try { ws.close(); } catch (e) {} reject(new Error('生成超时')); } }, 40000);
   });
+}
 
-  btnPause.addEventListener('click', function(){
-    if(running){ running=false; cancelTTS(); btnPause.textContent='继续'; setStatus('已暂停',''); }
-    else { run(); }
-  });
-  btnReplay.addEventListener('click', replay);
-  btnSkip.addEventListener('click', skip);
-  btnExit.addEventListener('click', function(){ running=false; gen++; cancelTTS(); stopMic(); btnPause.textContent='暂停'; player.style.display='none'; setup.style.display='flex'; });
+// ---------- DOM ----------
+const $ = id => document.getElementById(id);
+const elText = $('text'), elVoice = $('voice'), elRate = $('rate'), elRateVal = $('rateVal');
+const elBtn = $('btn'), elStatus = $('status'), elScript = $('script');
+const elBtnPause = $('btnPause'), elBtnReset = $('btnReset'), elCheck = $('check');
 
-  var wakeLock=null;
-  async function keepAwake(){ try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){} }
-  btnStart.addEventListener('click', keepAwake);
+// ---------- 状态 ----------
+let audio = null;          // Audio 元素
+let audioUrl = null;       // blob URL
+let stream = null;         // 麦克风流
+let audioCtx = null, analyser = null, dataArr = null;
+let voiceThreshold = 0.03; // 自动校准覆盖
+let baseRate = 1.0;        // 用户设的基础语速
+let currentRate = 1.0;     // 当前实际语速
+const MIN_RATE = 0.55, MAX_RATE = 1.35;
+let playing = false, waiting = false, paused = false;
+let lastVoice = 0;
+let recentSamples = [];    // 1/0 数组，语音占比
+let monitorTimer = null;
+let finished = false;
 
-  try{ var saved=localStorage.getItem('teleprompter_text'); if(saved) textEl.value=saved; }catch(e){}
+function setStatus(msg, cls) { elStatus.textContent = msg; elStatus.className = cls || ''; }
+
+// ---------- 能力自检 ----------
+(function checkCaps() {
+  const rows = [];
+  rows.push(['HTTPS 安全上下文（麦克风必需）', window.isSecureContext]);
+  rows.push(['麦克风 getUserMedia', !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia]);
+  rows.push(['WebSocket（生成语音）', 'WebSocket' in window]);
+  rows.push(['保持音高变速 preservesPitch', 'preservesPitch' in HTMLMediaElement.prototype]);
+  elCheck.innerHTML = rows.map(([n, ok]) =>
+    '<span class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? '✓' : '✗') + ' ' + n + '</span>').join(' &nbsp;·&nbsp; ');
 })();
+
+elRate.addEventListener('input', () => {
+  baseRate = parseFloat(elRate.value);
+  elRateVal.textContent = baseRate.toFixed(2) + '×';
+});
+
+// ---------- 麦克风 ----------
+async function startMic() {
+  if (stream) return;
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+  });
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const src = audioCtx.createMediaStreamSource(stream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  dataArr = new Uint8Array(analyser.fftSize);
+}
+function getLevel() {
+  if (!analyser) return 0;
+  analyser.getByteTimeDomainData(dataArr);
+  let s = 0;
+  for (let i = 0; i < dataArr.length; i++) { const v = (dataArr[i] - 128) / 128; s += v * v; }
+  return Math.sqrt(s / dataArr.length);
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function calibrate() {
+  const samples = [];
+  const t0 = performance.now();
+  while (performance.now() - t0 < 1500) { samples.push(getLevel()); await sleep(30); }
+  samples.sort((a, b) => a - b);
+  const base = samples[Math.floor(samples.length * 0.6)] || 0.01;
+  voiceThreshold = Math.max(base * 3.5, 0.015);
+}
+
+// ---------- 跟读闭环 ----------
+function startMonitor() {
+  if (monitorTimer) clearInterval(monitorTimer);
+  monitorTimer = setInterval(() => {
+    if (!playing || paused || finished || !audio) return;
+    const lvl = getLevel();
+    const now = performance.now();
+    const speaking = lvl > voiceThreshold;
+
+    if (speaking) lastVoice = now;
+    if (speaking) recentSamples.push(1); else recentSamples.push(0);
+    if (recentSamples.length > 24) recentSamples.shift(); // 约 12 秒窗口
+
+    // 卡壳检测：最近 1.5 秒（3 个采样）都无声 → 停等
+    const last3 = recentSamples.slice(-3);
+    const stalled = last3.length >= 3 && last3.every(v => v === 0);
+
+    if (stalled && !waiting) {
+      waiting = true;
+      audio.playbackRate = 0.06; // 近似停，保留位置
+      setStatus('你停下来了，等你跟上…', 'waiting');
+    } else if (waiting && speaking) {
+      waiting = false;
+      audio.playbackRate = currentRate;
+      setStatus('继续跟读', 'playing');
+    } else if (!waiting && !stalled) {
+      // 快慢自适应：语音占比高 → 加速；低 → 减速
+      const ratio = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
+      if (recentSamples.length >= 10) {
+        if (ratio > 0.62 && currentRate < MAX_RATE) {
+          currentRate = Math.min(currentRate + 0.02, MAX_RATE);
+        } else if (ratio < 0.35 && currentRate > MIN_RATE) {
+          currentRate = Math.max(currentRate - 0.02, MIN_RATE);
+        }
+        audio.playbackRate = currentRate;
+      }
+    }
+  }, 500);
+}
+
+// ---------- 主流程 ----------
+async function main() {
+  const text = elText.value.trim();
+  if (!text) { setStatus('请先粘贴文案', 'error'); return; }
+  if (text.length > MAX_TEXT_LEN) { setStatus('文案过长（超过 ' + MAX_TEXT_LEN + ' 字），请分段粘贴', 'error'); return; }
+
+  elBtn.disabled = true;
+  elBtn.textContent = '生成中…';
+  setStatus('正在生成语音（Edge TTS）…');
+
+  try {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    await startMic();
+    const url = await edgeTTS(text, elVoice.value, (bytes) => {
+      setStatus('正在生成语音… 已收 ' + Math.round(bytes / 1024) + ' KB');
+    });
+    audioUrl = url;
+  } catch (e) {
+    elBtn.disabled = false;
+    elBtn.textContent = '生成并开始';
+    setStatus('❌ ' + e.message, 'error');
+    return;
+  }
+
+  elBtn.disabled = false;
+  elBtn.textContent = '重新生成';
+  elBtnPause.disabled = false;
+  elBtnReset.disabled = false;
+
+  elScript.textContent = text;
+  setStatus('校准环境噪音…');
+  await calibrate();
+  startPlayback();
+}
+
+function startPlayback() {
+  if (audio) { audio.pause(); audio = null; }
+
+  audio = new Audio(audioUrl);
+  audio.preservesPitch = true;
+  audio.playbackRate = baseRate;
+  currentRate = baseRate;
+  recentSamples = [];
+  waiting = false; paused = false; finished = false;
+  lastVoice = performance.now();
+
+  audio.onended = () => { finished = true; playing = false; setStatus('✓ 跟读完成', 'playing'); };
+  audio.onerror = () => { finished = true; playing = false; setStatus('播放出错', 'error'); };
+
+  playing = true;
+  setStatus('跟读中… 念起来吧', 'playing');
+  audio.play().catch(e => { setStatus('播放失败：' + e.message, 'error'); });
+  startMonitor();
+}
+
+// ---------- 事件 ----------
+elBtn.addEventListener('click', main);
+
+elBtnPause.addEventListener('click', () => {
+  if (!audio) return;
+  paused = !paused;
+  if (paused) { audio.pause(); setStatus('已暂停', ''); }
+  else { audio.play(); setStatus(waiting ? '继续跟读' : '跟读中…', 'playing'); }
+});
+
+elBtnReset.addEventListener('click', () => {
+  if (audio) { audio.pause(); audio = null; }
+  playing = false; finished = false; paused = false;
+  if (monitorTimer) clearInterval(monitorTimer);
+  elScript.textContent = '跟读文案会显示在这里';
+  setStatus('已重置，点「生成并开始」重新来');
+  elBtnPause.disabled = true;
+  elBtnReset.disabled = true;
+});
 </script>
 </body>
 </html>
